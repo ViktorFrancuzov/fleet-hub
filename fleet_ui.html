@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Fleet Hub</title>
+  <style>
+    :root{ color-scheme:light dark; --bg:#0b1220; --card:#0f172a; --muted:#94a3b8; --accent:#38bdf8; --border:#334155; }
+    body{ margin:0; font:14px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif; background:radial-gradient(circle at 20% 20%, #0f172a 0, #020617 38%, #000 80%); color:#e2e8f0; }
+    header{ padding:14px 16px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; border-bottom:1px solid #1e293b; background:#0b1220dd; backdrop-filter:blur(6px); position:sticky; top:0; z-index:1; }
+    label{ display:flex; flex-direction:column; font-size:12px; color:var(--muted); gap:4px; }
+    input{ padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:rgba(255,255,255,0.04); color:inherit; min-width:240px; }
+    button{ border:none; border-radius:999px; padding:9px 14px; font-weight:600; cursor:pointer; background:var(--accent); color:#0b1220; }
+    button.secondary{ background:#1e293b; color:#e2e8f0; border:1px solid var(--border); }
+    main{ padding:16px; display:grid; gap:16px; max-width:1200px; margin:0 auto; }
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; box-shadow:0 20px 60px #0008; }
+    .card h3{ margin:0 0 8px; }
+    .muted{ color:var(--muted); font-size:12px; }
+    .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    table{ width:100%; border-collapse:collapse; font-size:13px; }
+    th,td{ border-bottom:1px solid #1f2937; padding:8px 6px; text-align:left; }
+    th{ color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
+    .status{ display:inline-flex; gap:6px; align-items:center; }
+    .dot{ width:10px; height:10px; border-radius:999px; background:#475569; }
+    .dot.ok{ background:#22c55e; }
+    .dot.offline{ background:#ef4444; }
+    .pill{ border:1px solid var(--border); border-radius:999px; padding:2px 8px; font-size:12px; }
+    textarea{ width:100%; min-height:80px; border-radius:12px; border:1px solid var(--border); background:#0f172a; color:inherit; padding:10px; resize:vertical; }
+    .flex{ display:flex; gap:8px; flex-wrap:wrap; }
+    .grow{ flex:1 1 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <label>Base URL
+      <input id="base" placeholder="https://script.google.com/macros/s/.../exec"/>
+    </label>
+    <label>Token
+      <input id="token" placeholder="api token"/>
+    </label>
+    <button id="btnSave">Save</button>
+    <button id="btnRefresh" class="secondary">Refresh</button>
+    <span id="msg" class="muted"></span>
+  </header>
+  <main>
+    <section class="card">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <h3>Сводка</h3>
+          <div class="muted" id="summary">—</div>
+        </div>
+        <div class="row">
+          <label class="row" style="align-items:center; gap:6px; color:var(--muted);">
+            <input type="checkbox" id="autoRefresh" style="width:auto; min-width:0;"/>
+            auto 5s
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Команда устройствам</h3>
+      <div class="flex">
+        <label class="grow">Target ID (или all)
+          <input id="cmdTarget" placeholder="all"/>
+        </label>
+        <label class="grow">Command
+          <input id="cmdName" placeholder="reboot / snapshot / ..." />
+        </label>
+      </div>
+      <label class="muted" style="margin-top:8px;">Payload (JSON, опционально)</label>
+      <textarea id="cmdPayload" placeholder='{"foo":"bar"}'></textarea>
+      <div class="row" style="justify-content:flex-end; margin-top:8px;">
+        <button id="btnSend">Send</button>
+      </div>
+      <div id="cmdMsg" class="muted"></div>
+    </section>
+
+    <section class="card">
+      <h3>Контроллеры</h3>
+      <div class="muted" style="margin-bottom:6px;">Регистрации и последние heartbeats</div>
+      <div style="overflow:auto; max-height:420px;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Status</th><th>Last seen</th><th>FW</th><th>IP</th><th>Tags</th><th>Pending cmd</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const els = {
+      base:document.getElementById('base'),
+      token:document.getElementById('token'),
+      msg:document.getElementById('msg'),
+      summary:document.getElementById('summary'),
+      rows:document.getElementById('rows'),
+      auto:document.getElementById('autoRefresh'),
+      btnRefresh:document.getElementById('btnRefresh'),
+      btnSave:document.getElementById('btnSave'),
+      cmdTarget:document.getElementById('cmdTarget'),
+      cmdName:document.getElementById('cmdName'),
+      cmdPayload:document.getElementById('cmdPayload'),
+      btnSend:document.getElementById('btnSend'),
+      cmdMsg:document.getElementById('cmdMsg'),
+    };
+
+    const ls = {
+      get(k, d){ try{ const v = localStorage.getItem(k); return v!==null ? v : d; }catch(_){ return d; } },
+      set(k, v){ try{ localStorage.setItem(k, v); }catch(_){ } }
+    };
+
+    function init(){
+      els.base.value = ls.get('fleet.base','');
+      els.token.value = ls.get('fleet.token','');
+      els.auto.checked = ls.get('fleet.auto','1') === '1';
+      els.btnSave.addEventListener('click', saveConfig);
+      els.btnRefresh.addEventListener('click', refreshAll);
+      els.btnSend.addEventListener('click', sendCommand);
+      els.auto.addEventListener('change', () => {
+        ls.set('fleet.auto', els.auto.checked ? '1':'0');
+        schedule();
+      });
+      refreshAll();
+      schedule();
+    }
+
+    function saveConfig(){
+      ls.set('fleet.base', els.base.value.trim());
+      ls.set('fleet.token', els.token.value.trim());
+      flash('Saved');
+      refreshAll();
+    }
+
+    let autoTimer = null;
+    function schedule(){
+      if (autoTimer) clearInterval(autoTimer);
+      if (els.auto.checked){
+        autoTimer = setInterval(refreshAll, 5000);
+      }
+    }
+
+    async function refreshAll(){
+      const base = els.base.value.trim();
+      const token = els.token.value.trim();
+      if (!base){ flash('Укажи base URL'); return; }
+      try{
+        const [summary, list] = await Promise.all([
+          api(base, token, {mode:'status'}),
+          api(base, token, {mode:'list'}),
+        ]);
+        renderSummary(summary);
+        renderTable(list.devices || []);
+        flash('OK');
+      }catch(err){
+        flash(err.message || err);
+      }
+    }
+
+    async function sendCommand(){
+      const base = els.base.value.trim();
+      const token = els.token.value.trim();
+      const id = (els.cmdTarget.value.trim() || 'all');
+      const cmd = els.cmdName.value.trim();
+      let payload = null;
+      if (!cmd){ els.cmdMsg.textContent = 'Команда не заполнена'; return; }
+      if (els.cmdPayload.value.trim()){
+        try{ payload = JSON.parse(els.cmdPayload.value); }
+        catch(e){ els.cmdMsg.textContent = 'Payload: не JSON'; return; }
+      }
+      try{
+        const resp = await api(base, token, {mode:'setCommand', id, command:cmd, payload});
+        els.cmdMsg.textContent = resp.ok ? 'Отправлено' : (resp.error || 'error');
+        refreshAll();
+      }catch(err){
+        els.cmdMsg.textContent = err.message || err;
+      }
+    }
+
+    async function api(base, token, data){
+      const url = base;
+      const body = Object.assign({}, data, { token });
+      const resp = await fetch(url, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      });
+      const json = await resp.json();
+      if (!json.ok) throw new Error(json.error || 'api_error');
+      return json;
+    }
+
+    function renderSummary(s){
+      if (!s || !s.ok) { els.summary.textContent = '—'; return; }
+      els.summary.textContent = `Всего: ${s.total||0}, online: ${s.online||0}, обновлено: ${fmtTime(s.updated_ms)}`;
+    }
+
+    function renderTable(items){
+      const now = Date.now();
+      const rows = items.sort((a,b)=> (b.last_seen||0)-(a.last_seen||0)).map(dev => {
+        const last = dev.last_seen ? humanAgo(now - dev.last_seen) : '—';
+        const status = (dev.status || 'unknown').toLowerCase();
+        const pending = dev.command ? dev.command.cmd : '';
+        const tags = Array.isArray(dev.tags) ? dev.tags.join(', ') : '';
+        return `<tr>
+          <td>${escape(dev.id)}</td>
+          <td>${escape(dev.name||'')}</td>
+          <td><span class="status"><span class="dot ${status === 'online' || status === 'ok' ? 'ok' : 'offline'}"></span>${escape(status)}</span></td>
+          <td>${last}</td>
+          <td>${escape(dev.fw||'')}</td>
+          <td>${escape(dev.ip||'')}</td>
+          <td>${escape(tags)}</td>
+          <td>${escape(pending||'')}</td>
+        </tr>`;
+      }).join('');
+      els.rows.innerHTML = rows || '<tr><td colspan="8" class="muted">Нет данных</td></tr>';
+    }
+
+    function humanAgo(ms){
+      if (!ms || ms < 0) return '—';
+      const sec = Math.round(ms/1000);
+      if (sec < 60) return sec + 's';
+      const m = Math.round(sec/60);
+      if (m < 60) return m + 'm';
+      const h = Math.round(m/60);
+      if (h < 48) return h + 'h';
+      const d = Math.round(h/24);
+      return d + 'd';
+    }
+
+    function fmtTime(ts){
+      if (!ts) return '—';
+      const d = new Date(ts);
+      return d.toISOString().replace('T',' ').replace('Z','');
+    }
+
+    function flash(text){ els.msg.textContent = text; }
+    function escape(s){ return String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
