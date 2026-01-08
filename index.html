@@ -28,6 +28,10 @@
     textarea{ width:100%; min-height:80px; border-radius:12px; border:1px solid var(--border); background:#0f172a; color:inherit; padding:10px; resize:vertical; }
     .flex{ display:flex; gap:8px; flex-wrap:wrap; }
     .grow{ flex:1 1 0; }
+    .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; }
+    pre.mono{ margin:8px 0 0; background:#0b1220; border:1px solid #1f2937; padding:10px; border-radius:10px; overflow:auto; max-height:200px; }
+    .clickable tr{ cursor:pointer; }
+    .clip{ max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   </style>
 </head>
 <body>
@@ -80,16 +84,34 @@
       <h3>Контроллеры</h3>
       <div class="muted" style="margin-bottom:6px;">Регистрации и последние heartbeats</div>
       <div style="overflow:auto; max-height:420px;">
-        <table>
+        <table class="clickable">
           <thead>
             <tr>
-              <th>ID</th><th>Name</th><th>Status</th><th>Last seen</th><th>FW</th><th>IP</th><th>Tags</th><th>Pending cmd</th>
+              <th>ID</th><th>Name</th><th>Status</th><th>Last seen</th><th>FW</th><th>IP</th><th>Tags</th><th>Cfg</th><th>Info</th><th>Pending cmd</th>
             </tr>
           </thead>
           <tbody id="rows">
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section class="card">
+      <h3>Конфиг контроллера</h3>
+      <div class="flex">
+        <label class="grow">Target ID
+          <input id="cfgTarget" placeholder="device id"/>
+        </label>
+        <div class="row" style="align-items:flex-end;">
+          <button id="btnCfgLoad" class="secondary">Load</button>
+          <button id="btnCfgSave">Save</button>
+        </div>
+      </div>
+      <label class="muted" style="margin-top:8px;">Config (JSON)</label>
+      <textarea id="cfgJson" class="mono" placeholder='{"sample_rate":5}'></textarea>
+      <div id="cfgMsg" class="muted"></div>
+      <label class="muted" style="margin-top:8px;">Selected device</label>
+      <pre id="cfgInfo" class="mono">—</pre>
     </section>
   </main>
 
@@ -108,6 +130,12 @@
       cmdPayload:document.getElementById('cmdPayload'),
       btnSend:document.getElementById('btnSend'),
       cmdMsg:document.getElementById('cmdMsg'),
+      cfgTarget:document.getElementById('cfgTarget'),
+      btnCfgLoad:document.getElementById('btnCfgLoad'),
+      btnCfgSave:document.getElementById('btnCfgSave'),
+      cfgJson:document.getElementById('cfgJson'),
+      cfgMsg:document.getElementById('cfgMsg'),
+      cfgInfo:document.getElementById('cfgInfo'),
     };
 
     const ls = {
@@ -115,13 +143,19 @@
       set(k, v){ try{ localStorage.setItem(k, v); }catch(_){ } }
     };
 
+    const state = { devices: [] };
+
     function init(){
       els.base.value = ls.get('fleet.base','');
       els.token.value = ls.get('fleet.token','');
       els.auto.checked = ls.get('fleet.auto','1') === '1';
+      els.cfgTarget.value = ls.get('fleet.cfgTarget','');
       els.btnSave.addEventListener('click', saveConfig);
       els.btnRefresh.addEventListener('click', refreshAll);
       els.btnSend.addEventListener('click', sendCommand);
+      els.btnCfgLoad.addEventListener('click', loadConfig);
+      els.btnCfgSave.addEventListener('click', saveConfigForDevice);
+      els.rows.addEventListener('click', onRowClick);
       els.auto.addEventListener('change', () => {
         ls.set('fleet.auto', els.auto.checked ? '1':'0');
         schedule();
@@ -158,7 +192,7 @@
         renderTable(list.devices || []);
         flash('OK');
       }catch(err){
-        flash(err.message || err);
+        flash(formatErr(err));
       }
     }
 
@@ -178,20 +212,120 @@
         els.cmdMsg.textContent = resp.ok ? 'Отправлено' : (resp.error || 'error');
         refreshAll();
       }catch(err){
-        els.cmdMsg.textContent = err.message || err;
+        els.cmdMsg.textContent = formatErr(err);
       }
     }
 
-    async function api(base, token, data){
-      const url = base;
-      const body = Object.assign({}, data, { token });
-      const resp = await fetch(url, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(body)
+    async function loadConfig(){
+      const base = els.base.value.trim();
+      const token = els.token.value.trim();
+      const id = els.cfgTarget.value.trim();
+      if (!id){ els.cfgMsg.textContent = 'ID не задан'; return; }
+      try{
+        const resp = await api(base, token, {mode:'getConfig', id});
+        els.cfgJson.value = resp.config ? JSON.stringify(resp.config, null, 2) : '';
+        els.cfgMsg.textContent = resp.config ? `Загружено (rev ${resp.config_rev||0})` : 'Конфиг пуст';
+      }catch(err){
+        els.cfgMsg.textContent = formatErr(err);
+      }
+    }
+
+    async function saveConfigForDevice(){
+      const base = els.base.value.trim();
+      const token = els.token.value.trim();
+      const id = els.cfgTarget.value.trim();
+      if (!id){ els.cfgMsg.textContent = 'ID не задан'; return; }
+      let config = null;
+      if (els.cfgJson.value.trim()){
+        try{ config = JSON.parse(els.cfgJson.value); }
+        catch(e){ els.cfgMsg.textContent = 'Config: не JSON'; return; }
+      }
+      try{
+        const resp = await api(base, token, {mode:'setConfig', id, config});
+        els.cfgMsg.textContent = resp.ok ? 'Сохранено' : (resp.error || 'error');
+        refreshAll();
+      }catch(err){
+        els.cfgMsg.textContent = formatErr(err);
+      }
+    }
+
+    function shouldUseJsonp(base){
+      try{
+        const u = new URL(base, location.href);
+        if (u.origin === location.origin) return false;
+        return u.hostname.includes('script.google.com');
+      }catch(_){
+        return false;
+      }
+    }
+
+    function jsonpRequest(base, params){
+      return new Promise((resolve, reject) => {
+        const cbName = 'fleetHubCb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+        const u = new URL(base, location.href);
+        Object.entries(params || {}).forEach(([k,v]) => {
+          if (v === undefined) return;
+          u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+        });
+        u.searchParams.set('callback', cbName);
+
+        const script = document.createElement('script');
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error('jsonp_timeout'));
+        }, 8000);
+
+        function cleanup(){
+          clearTimeout(timer);
+          if (script.parentNode) script.parentNode.removeChild(script);
+          try{ delete window[cbName]; }catch(_){ window[cbName] = undefined; }
+        }
+
+        window[cbName] = (data) => {
+          cleanup();
+          resolve(data);
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('jsonp_error'));
+        };
+
+        script.src = u.toString();
+        document.head.appendChild(script);
       });
-      const json = await resp.json();
-      if (!json.ok) throw new Error(json.error || 'api_error');
+    }
+
+    async function api(base, token, data){
+      const body = Object.assign({}, data, { token });
+      let json;
+      if (shouldUseJsonp(base)){
+        json = await jsonpRequest(base, body);
+      } else {
+        let resp;
+        try{
+          resp = await fetch(base, {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+          });
+        }catch(err){
+          throw new Error(`fetch_failed (${data.mode || 'unknown'}): ${err.message || err}`);
+        }
+        let text = '';
+        try{ text = await resp.text(); }catch(_){}
+        try{ json = text ? JSON.parse(text) : {}; }catch(_){
+          throw new Error(`bad_json (${data.mode || 'unknown'}): ${text.slice(0,200)}`);
+        }
+        if (!resp.ok){
+          const errMsg = json && json.error ? json.error : (resp.status + ' ' + resp.statusText);
+          throw new Error(`http_${resp.status} (${data.mode || 'unknown'}): ${errMsg}`);
+        }
+      }
+      if (!json || !json.ok){
+        const msg = json && json.error ? json.error : 'api_error';
+        throw new Error(`${msg} (${data.mode || 'unknown'})`);
+      }
       return json;
     }
 
@@ -202,11 +336,14 @@
 
     function renderTable(items){
       const now = Date.now();
+      state.devices = items;
       const rows = items.sort((a,b)=> (b.last_seen||0)-(a.last_seen||0)).map(dev => {
         const last = dev.last_seen ? humanAgo(now - dev.last_seen) : '—';
         const status = (dev.status || 'unknown').toLowerCase();
         const pending = dev.command ? dev.command.cmd : '';
         const tags = Array.isArray(dev.tags) ? dev.tags.join(', ') : '';
+        const info = dev.info ? truncate(JSON.stringify(dev.info), 60) : '';
+        const cfg = dev.config_rev ? ('rev ' + dev.config_rev) : '';
         return `<tr>
           <td>${escape(dev.id)}</td>
           <td>${escape(dev.name||'')}</td>
@@ -215,10 +352,12 @@
           <td>${escape(dev.fw||'')}</td>
           <td>${escape(dev.ip||'')}</td>
           <td>${escape(tags)}</td>
+          <td>${escape(cfg)}</td>
+          <td class="clip">${escape(info||'')}</td>
           <td>${escape(pending||'')}</td>
         </tr>`;
       }).join('');
-      els.rows.innerHTML = rows || '<tr><td colspan="8" class="muted">Нет данных</td></tr>';
+      els.rows.innerHTML = rows || '<tr><td colspan="10" class="muted">Нет данных</td></tr>';
     }
 
     function humanAgo(ms){
@@ -240,7 +379,46 @@
     }
 
     function flash(text){ els.msg.textContent = text; }
+    function formatErr(err){
+      if (!err) return 'error';
+      if (typeof err === 'string') return err;
+      return err.message || String(err);
+    }
     function escape(s){ return String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+    function truncate(s, n){ return s.length > n ? s.slice(0, n-1) + '…' : s; }
+
+    function onRowClick(e){
+      const tr = e.target.closest('tr');
+      if (!tr) return;
+      const idCell = tr.querySelector('td');
+      if (!idCell) return;
+      const id = idCell.textContent.trim();
+      if (id) selectDevice(id);
+    }
+
+    function selectDevice(id){
+      const dev = state.devices.find(d => d.id === id);
+      if (!dev) return;
+      els.cfgTarget.value = id;
+      ls.set('fleet.cfgTarget', id);
+      if (dev.config !== undefined){
+        els.cfgJson.value = dev.config ? JSON.stringify(dev.config, null, 2) : '';
+      }
+      const info = {
+        id: dev.id,
+        name: dev.name,
+        status: dev.status,
+        fw: dev.fw,
+        ip: dev.ip,
+        tags: dev.tags,
+        info: dev.info,
+        metrics: dev.metrics,
+        last_seen: dev.last_seen,
+        config_rev: dev.config_rev,
+        config_updated: dev.config_updated
+      };
+      els.cfgInfo.textContent = JSON.stringify(info, null, 2);
+    }
 
     document.addEventListener('DOMContentLoaded', init);
   </script>
