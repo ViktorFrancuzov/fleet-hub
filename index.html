@@ -110,7 +110,9 @@
       </div>
       <div class="row" style="margin-top:8px;">
         <button id="btnOpenFm" class="secondary" disabled>Open File Manager</button>
+        <button id="btnOpenFmHttp" class="secondary" disabled>Open File Manager (HTTP)</button>
         <span id="netCheck" class="muted">Network: —</span>
+        <span id="fmHint" class="muted"></span>
       </div>
       <label class="muted" style="margin-top:8px;">Config (JSON)</label>
       <textarea id="cfgJson" class="mono" placeholder='{"sample_rate":5}'></textarea>
@@ -143,7 +145,9 @@
       cfgMsg:document.getElementById('cfgMsg'),
       cfgInfo:document.getElementById('cfgInfo'),
       btnOpenFm:document.getElementById('btnOpenFm'),
+      btnOpenFmHttp:document.getElementById('btnOpenFmHttp'),
       netCheck:document.getElementById('netCheck'),
+      fmHint:document.getElementById('fmHint'),
     };
 
     const ls = {
@@ -434,12 +438,27 @@
 
     function updateFileManagerLink(ip){
       if (ip && typeof ip === 'string' && ip.includes('.')) {
-        const url = `https://${ip}/list`;
+        const httpsUrl = `https://${ip}/list`;
+        const httpUrl = `http://${ip}/list`;
         els.btnOpenFm.disabled = false;
-        els.btnOpenFm.onclick = () => window.open(url, '_blank');
+        els.btnOpenFm.onclick = () => window.open(httpsUrl, '_blank');
+        if (els.btnOpenFmHttp) {
+          els.btnOpenFmHttp.disabled = false;
+          els.btnOpenFmHttp.onclick = () => window.open(httpUrl, '_blank');
+        }
+        if (els.fmHint) {
+          els.fmHint.textContent = `FM: ${httpsUrl} | ${httpUrl}`;
+        }
       } else {
         els.btnOpenFm.disabled = true;
         els.btnOpenFm.onclick = null;
+        if (els.btnOpenFmHttp) {
+          els.btnOpenFmHttp.disabled = true;
+          els.btnOpenFmHttp.onclick = null;
+        }
+        if (els.fmHint) {
+          els.fmHint.textContent = '';
+        }
       }
     }
 
