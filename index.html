@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Fleet Hub19.02 08.01.2026</title>
+  <title>Fleet Hub</title>
   <style>
     :root{ color-scheme:light dark; --bg:#0b1220; --card:#0f172a; --muted:#94a3b8; --accent:#38bdf8; --border:#334155; }
     body{ margin:0; font:14px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif; background:radial-gradient(circle at 20% 20%, #0f172a 0, #020617 38%, #000 80%); color:#e2e8f0; }
@@ -45,6 +45,7 @@
     <button id="btnSave">Save</button>
     <button id="btnRefresh" class="secondary">Refresh</button>
     <span id="msg" class="muted"></span>
+    <span id="build" class="muted"></span>
   </header>
   <main>
     <section class="card">
@@ -120,6 +121,7 @@
       base:document.getElementById('base'),
       token:document.getElementById('token'),
       msg:document.getElementById('msg'),
+      build:document.getElementById('build'),
       summary:document.getElementById('summary'),
       rows:document.getElementById('rows'),
       auto:document.getElementById('autoRefresh'),
@@ -144,8 +146,10 @@
     };
 
     const state = { devices: [] };
+    const BUILD_INFO = '2026-01-13 15:37 UTC';
 
     function init(){
+      if (els.build) els.build.textContent = 'build ' + BUILD_INFO;
       els.base.value = ls.get('fleet.base','');
       els.token.value = ls.get('fleet.token','');
       els.auto.checked = ls.get('fleet.auto','1') === '1';
