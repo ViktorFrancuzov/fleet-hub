@@ -120,6 +120,24 @@
       <label class="muted" style="margin-top:8px;">Selected device</label>
       <pre id="cfgInfo" class="mono">—</pre>
     </section>
+
+    <section class="card">
+      <h3>Monitor JSON</h3>
+      <div class="flex">
+        <label class="grow">WebSocket URL
+          <input id="monUrl" placeholder="wss://<device-ip>/ws/mon"/>
+        </label>
+        <div class="row" style="align-items:flex-end;">
+          <button id="btnMonConnect">Connect</button>
+          <button id="btnMonDisconnect" class="secondary" disabled>Disconnect</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <span id="monStatus" class="muted">Status: idle</span>
+      </div>
+      <label class="muted" style="margin-top:8px;">Last message</label>
+      <pre id="monOut" class="mono">—</pre>
+    </section>
   </main>
 
   <script>
@@ -148,6 +166,11 @@
       btnOpenFmHttp:document.getElementById('btnOpenFmHttp'),
       netCheck:document.getElementById('netCheck'),
       fmHint:document.getElementById('fmHint'),
+      monUrl:document.getElementById('monUrl'),
+      btnMonConnect:document.getElementById('btnMonConnect'),
+      btnMonDisconnect:document.getElementById('btnMonDisconnect'),
+      monStatus:document.getElementById('monStatus'),
+      monOut:document.getElementById('monOut'),
     };
 
     const ls = {
@@ -169,6 +192,8 @@
       els.btnSend.addEventListener('click', sendCommand);
       els.btnCfgLoad.addEventListener('click', loadConfig);
       els.btnCfgSave.addEventListener('click', saveConfigForDevice);
+      els.btnMonConnect.addEventListener('click', connectMonitor);
+      els.btnMonDisconnect.addEventListener('click', disconnectMonitor);
       els.rows.addEventListener('click', onRowClick);
       els.auto.addEventListener('change', () => {
         ls.set('fleet.auto', els.auto.checked ? '1':'0');
@@ -434,6 +459,70 @@
       els.cfgInfo.textContent = JSON.stringify(info, null, 2);
       updateNetCheck(dev.ip);
       updateFileManagerLink(dev.ip);
+      updateMonitorUrl(dev.ip);
+    }
+
+    let monSocket = null;
+    function updateMonitorUrl(ip){
+      if (ip && typeof ip === 'string') {
+        els.monUrl.value = `wss://${ip}/ws/mon`;
+      } else if (!els.monUrl.value.trim()) {
+        const host = window.location.host;
+        if (host) els.monUrl.value = `wss://${host}/ws/mon`;
+      }
+    }
+
+    function connectMonitor(){
+      const url = els.monUrl.value.trim();
+      if (!url){ els.monStatus.textContent = 'Status: no url'; return; }
+      disconnectMonitor();
+      els.monStatus.textContent = 'Status: connecting...';
+      try{
+        monSocket = new WebSocket(url);
+      }catch(err){
+        els.monStatus.textContent = `Status: error (${formatErr(err)})`;
+        return;
+      }
+      els.btnMonConnect.disabled = true;
+      els.btnMonDisconnect.disabled = false;
+      monSocket.onopen = () => {
+        els.monStatus.textContent = 'Status: connected';
+      };
+      monSocket.onclose = () => {
+        els.monStatus.textContent = 'Status: closed';
+        els.btnMonConnect.disabled = false;
+        els.btnMonDisconnect.disabled = true;
+        monSocket = null;
+      };
+      monSocket.onerror = () => {
+        els.monStatus.textContent = 'Status: ws error';
+      };
+      monSocket.onmessage = (evt) => {
+        const txt = evt.data;
+        if (typeof txt === 'string') {
+          try{
+            const obj = JSON.parse(txt);
+            els.monOut.textContent = JSON.stringify(obj, null, 2);
+          }catch(_){
+            els.monOut.textContent = txt;
+          }
+        } else {
+          els.monOut.textContent = String(txt);
+        }
+      };
+    }
+
+    function disconnectMonitor(){
+      if (monSocket) {
+        monSocket.onopen = null;
+        monSocket.onclose = null;
+        monSocket.onerror = null;
+        monSocket.onmessage = null;
+        try{ monSocket.close(); }catch(_){}
+        monSocket = null;
+      }
+      els.btnMonConnect.disabled = false;
+      els.btnMonDisconnect.disabled = true;
     }
 
     function updateFileManagerLink(ip){
