@@ -109,8 +109,8 @@
         </div>
       </div>
       <div class="row" style="margin-top:8px;">
-        <button id="btnOpenFm" class="secondary" disabled>Open File Manager</button>
-        <button id="btnOpenFmHttp" class="secondary" disabled>Open File Manager (HTTP)</button>
+        <button id="btnOpenFm" class="secondary" disabled>Open File Manager (HTTP)</button>
+        <button id="btnOpenSite" class="secondary" disabled>Open Site</button>
         <span id="netCheck" class="muted">Network: —</span>
         <span id="fmHint" class="muted"></span>
       </div>
@@ -124,12 +124,11 @@
     <section class="card">
       <h3>Monitor JSON</h3>
       <div class="flex">
-        <label class="grow">WebSocket URL
-          <input id="monUrl" placeholder="wss://<device-ip>/ws/mon"/>
+        <label class="grow">HTTP URL
+          <input id="monUrl" placeholder="https://<device-ip>/mon.json"/>
         </label>
         <div class="row" style="align-items:flex-end;">
-          <button id="btnMonConnect">Connect</button>
-          <button id="btnMonDisconnect" class="secondary" disabled>Disconnect</button>
+          <button id="btnMonFetch">Fetch</button>
         </div>
       </div>
       <div class="row" style="margin-top:8px;">
@@ -163,12 +162,11 @@
       cfgMsg:document.getElementById('cfgMsg'),
       cfgInfo:document.getElementById('cfgInfo'),
       btnOpenFm:document.getElementById('btnOpenFm'),
-      btnOpenFmHttp:document.getElementById('btnOpenFmHttp'),
+      btnOpenSite:document.getElementById('btnOpenSite'),
       netCheck:document.getElementById('netCheck'),
       fmHint:document.getElementById('fmHint'),
       monUrl:document.getElementById('monUrl'),
-      btnMonConnect:document.getElementById('btnMonConnect'),
-      btnMonDisconnect:document.getElementById('btnMonDisconnect'),
+      btnMonFetch:document.getElementById('btnMonFetch'),
       monStatus:document.getElementById('monStatus'),
       monOut:document.getElementById('monOut'),
     };
@@ -192,8 +190,7 @@
       els.btnSend.addEventListener('click', sendCommand);
       els.btnCfgLoad.addEventListener('click', loadConfig);
       els.btnCfgSave.addEventListener('click', saveConfigForDevice);
-      els.btnMonConnect.addEventListener('click', connectMonitor);
-      els.btnMonDisconnect.addEventListener('click', disconnectMonitor);
+      els.btnMonFetch.addEventListener('click', fetchMonitor);
       els.rows.addEventListener('click', onRowClick);
       els.auto.addEventListener('change', () => {
         ls.set('fleet.auto', els.auto.checked ? '1':'0');
@@ -459,92 +456,79 @@
       els.cfgInfo.textContent = JSON.stringify(info, null, 2);
       updateNetCheck(dev.ip);
       updateFileManagerLink(dev.ip);
+      updateSiteLink(getSiteUrl(dev));
       updateMonitorUrl(dev.ip);
     }
 
-    let monSocket = null;
+    function getSiteUrl(dev){
+      if (dev && dev.config) {
+        if (typeof dev.config.site_url === 'string' && dev.config.site_url.trim()) {
+          return dev.config.site_url.trim();
+        }
+        if (dev.config.ui && typeof dev.config.ui.site_url === 'string' && dev.config.ui.site_url.trim()) {
+          return dev.config.ui.site_url.trim();
+        }
+      }
+      if (dev && dev.info && typeof dev.info.site_url === 'string' && dev.info.site_url.trim()) {
+        return dev.info.site_url.trim();
+      }
+      return '';
+    }
+
     function updateMonitorUrl(ip){
       if (ip && typeof ip === 'string') {
-        els.monUrl.value = `wss://${ip}/ws/mon`;
+        els.monUrl.value = `https://${ip}/mon.json`;
       } else if (!els.monUrl.value.trim()) {
         const host = window.location.host;
-        if (host) els.monUrl.value = `wss://${host}/ws/mon`;
+        if (host) els.monUrl.value = `https://${host}/mon.json`;
       }
     }
 
-    function connectMonitor(){
+    function fetchMonitor(){
       const url = els.monUrl.value.trim();
       if (!url){ els.monStatus.textContent = 'Status: no url'; return; }
-      disconnectMonitor();
-      els.monStatus.textContent = 'Status: connecting...';
-      try{
-        monSocket = new WebSocket(url);
-      }catch(err){
-        els.monStatus.textContent = `Status: error (${formatErr(err)})`;
-        return;
-      }
-      els.btnMonConnect.disabled = true;
-      els.btnMonDisconnect.disabled = false;
-      monSocket.onopen = () => {
-        els.monStatus.textContent = 'Status: connected';
-      };
-      monSocket.onclose = () => {
-        els.monStatus.textContent = 'Status: closed';
-        els.btnMonConnect.disabled = false;
-        els.btnMonDisconnect.disabled = true;
-        monSocket = null;
-      };
-      monSocket.onerror = () => {
-        els.monStatus.textContent = 'Status: ws error';
-      };
-      monSocket.onmessage = (evt) => {
-        const txt = evt.data;
-        if (typeof txt === 'string') {
+      els.monStatus.textContent = 'Status: fetching...';
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      fetch(url, {method:'GET', cache:'no-store', signal:ctrl.signal})
+        .then(resp => resp.text().then(text => ({ok:resp.ok, status:resp.status, text})))
+        .then(({ok, status, text}) => {
+          if (!ok) throw new Error(`http_${status}`);
           try{
-            const obj = JSON.parse(txt);
+            const obj = JSON.parse(text);
             els.monOut.textContent = JSON.stringify(obj, null, 2);
           }catch(_){
-            els.monOut.textContent = txt;
+            els.monOut.textContent = text;
           }
-        } else {
-          els.monOut.textContent = String(txt);
-        }
-      };
+          els.monStatus.textContent = 'Status: ok';
+        })
+        .catch(err => {
+          els.monStatus.textContent = `Status: error (${formatErr(err)})`;
+        })
+        .finally(() => clearTimeout(timer));
     }
 
-    function disconnectMonitor(){
-      if (monSocket) {
-        monSocket.onopen = null;
-        monSocket.onclose = null;
-        monSocket.onerror = null;
-        monSocket.onmessage = null;
-        try{ monSocket.close(); }catch(_){}
-        monSocket = null;
+    function updateSiteLink(url){
+      if (url) {
+        els.btnOpenSite.disabled = false;
+        els.btnOpenSite.onclick = () => window.open(url, '_blank');
+      } else {
+        els.btnOpenSite.disabled = true;
+        els.btnOpenSite.onclick = null;
       }
-      els.btnMonConnect.disabled = false;
-      els.btnMonDisconnect.disabled = true;
     }
 
     function updateFileManagerLink(ip){
       if (ip && typeof ip === 'string' && ip.includes('.')) {
-        const httpsUrl = `https://${ip}/list`;
-        const httpUrl = `http://${ip}/list`;
+        const httpUrl = `http://${ip}/`;
         els.btnOpenFm.disabled = false;
-        els.btnOpenFm.onclick = () => window.open(httpsUrl, '_blank');
-        if (els.btnOpenFmHttp) {
-          els.btnOpenFmHttp.disabled = false;
-          els.btnOpenFmHttp.onclick = () => window.open(httpUrl, '_blank');
-        }
+        els.btnOpenFm.onclick = () => window.open(httpUrl, '_blank');
         if (els.fmHint) {
-          els.fmHint.textContent = `FM: ${httpsUrl} | ${httpUrl}`;
+          els.fmHint.textContent = `FM: ${httpUrl}`;
         }
       } else {
         els.btnOpenFm.disabled = true;
         els.btnOpenFm.onclick = null;
-        if (els.btnOpenFmHttp) {
-          els.btnOpenFmHttp.disabled = true;
-          els.btnOpenFmHttp.onclick = null;
-        }
         if (els.fmHint) {
           els.fmHint.textContent = '';
         }
