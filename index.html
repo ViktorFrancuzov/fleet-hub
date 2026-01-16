@@ -88,7 +88,7 @@
         <table class="clickable">
           <thead>
             <tr>
-              <th>ID</th><th>Name</th><th>Status</th><th>Last seen</th><th>FW</th><th>IP</th><th>Tags</th><th>Cfg</th><th>Info</th><th>Pending cmd</th>
+              <th>ID</th><th>Name</th><th>Status</th><th>Last seen</th><th>Last reg</th><th>FW</th><th>IP</th><th>Tags</th><th>Cfg</th><th>Info</th><th>Pending cmd</th>
             </tr>
           </thead>
           <tbody id="rows">
@@ -379,12 +379,14 @@
         const pending = dev.command ? dev.command.cmd : '';
         const tags = Array.isArray(dev.tags) ? dev.tags.join(', ') : '';
         const info = dev.info ? truncate(JSON.stringify(dev.info), 60) : '';
+        const reg = dev.registered_at ? fmtTime(dev.registered_at) : '—';
         const cfg = dev.config_rev ? ('rev ' + dev.config_rev) : '';
         return `<tr>
           <td>${escape(dev.id)}</td>
           <td>${escape(dev.name||'')}</td>
           <td><span class="status"><span class="dot ${status === 'online' || status === 'ok' ? 'ok' : 'offline'}"></span>${escape(status)}</span></td>
           <td>${last}</td>
+          <td>${escape(reg)}</td>
           <td>${escape(dev.fw||'')}</td>
           <td>${escape(dev.ip||'')}</td>
           <td>${escape(tags)}</td>
@@ -393,7 +395,7 @@
           <td>${escape(pending||'')}</td>
         </tr>`;
       }).join('');
-      els.rows.innerHTML = rows || '<tr><td colspan="10" class="muted">Нет данных</td></tr>';
+      els.rows.innerHTML = rows || '<tr><td colspan="11" class="muted">Нет данных</td></tr>';
     }
 
     function humanAgo(ms){
@@ -450,6 +452,7 @@
         info: dev.info,
         metrics: dev.metrics,
         last_seen: dev.last_seen,
+        registered_at: dev.registered_at,
         config_rev: dev.config_rev,
         config_updated: dev.config_updated
       };
